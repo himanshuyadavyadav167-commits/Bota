@@ -19,15 +19,15 @@ UPI_ID = "himanshuji90million@fam"
 # =========================
 # FLASK (RENDER FIX)
 # =========================
-web_app = Flask(__name__)
+app_web = Flask(__name__)
 
-@web_app.route("/")
+@app_web.route("/")
 def home():
     return "Bot is running"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    web_app.run(host="0.0.0.0", port=port)
+    app_web.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_web, daemon=True).start()
 
@@ -65,6 +65,8 @@ date TEXT
 )
 """)
 
+conn.commit()
+
 # =========================
 # AUTO CLEAN (7 DAYS)
 # =========================
@@ -79,7 +81,7 @@ def clean_old_data():
 clean_old_data()
 
 # =========================
-# LIMIT SYSTEM
+# LIMIT SYSTEM (50/DAY)
 # =========================
 def check_limit(cat):
     today = str(datetime.date.today())
@@ -147,7 +149,7 @@ async def submit_pay(update, context):
     await q.answer()
 
     context.user_data["pay"] = True
-    await q.message.reply_text("✍️ Send your UTR number")
+    await q.message.reply_text("✍️ Send your UTR number now")
 
 # =========================
 # DASHBOARD
@@ -169,7 +171,7 @@ async def dashboard(update, context):
     )
 
 # =========================
-# DAY WISE DATA
+# DAY DATA FIXED
 # =========================
 async def day_data(update, context):
     if update.message.chat_id != ADMIN_ID:
@@ -180,6 +182,10 @@ async def day_data(update, context):
     cur.execute("SELECT * FROM payments WHERE date LIKE ?", (f"%{day}%",))
     data = cur.fetchall()
 
+    if not data:
+        await update.message.reply_text("No data found")
+        return
+
     msg = f"💰 {day} PAYMENTS\n\n"
 
     for d in data:
@@ -189,7 +195,7 @@ async def day_data(update, context):
     await update.message.reply_text(msg)
 
 # =========================
-# VIDEO REPORT
+# VIDEO REPORT FIXED
 # =========================
 async def video_report(update, context):
     if update.message.chat_id != ADMIN_ID:
@@ -206,7 +212,7 @@ async def video_report(update, context):
     await update.message.reply_text(msg)
 
 # =========================
-# TEXT HANDLER
+# TEXT HANDLER FIXED UTR FLOW
 # =========================
 async def text(update, context):
     uid = update.message.chat_id
@@ -235,7 +241,7 @@ async def text(update, context):
         await update.message.reply_text("✅ UTR received")
 
 # =========================
-# APPROVE
+# APPROVE FIXED
 # =========================
 async def approve(update, context):
     q = update.callback_query
