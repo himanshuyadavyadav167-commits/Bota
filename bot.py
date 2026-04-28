@@ -17,7 +17,7 @@ ADMIN_ID = 6676943475
 UPI_ID = "himanshuji90million@fam"
 
 # =========================
-# FLASK
+# FLASK (Render Fix)
 # =========================
 web_app = Flask(__name__)
 
@@ -37,31 +37,31 @@ threading.Thread(target=run_web, daemon=True).start()
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 
-cur.execute("""CREATE TABLE IF NOT EXISTS users (
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     category TEXT,
     approved INTEGER,
     code TEXT,
     ref_count INTEGER DEFAULT 0,
     free_used INTEGER DEFAULT 0
-)""")
+)
+""")
 
 cur.execute("CREATE TABLE IF NOT EXISTS payments (user_id INTEGER, utr TEXT, date TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS videos (user_id INTEGER, link TEXT, date TEXT)")
-
 conn.commit()
 
 # =========================
-# START + REF TRACK
+# START + REFERRAL TRACK
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.message.chat_id
 
-    # user create
     cur.execute("INSERT OR IGNORE INTO users (id, category, approved, code) VALUES (?, '', 0, '')", (uid,))
     conn.commit()
 
-    # referral logic
+    # referral
     if context.args:
         ref_id = int(context.args[0])
         if ref_id != uid:
@@ -97,15 +97,14 @@ async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔗 Your Link:
 {link}
 
-📊 Your Referrals: {refs}/5
+📊 Referrals: {refs}/5
 
 🎁 5 referrals = FREE entry (₹15 category)
 """
-
     await update.message.reply_text(msg)
 
 # =========================
-# CATEGORY + FREE ENTRY
+# CATEGORY
 # =========================
 async def category(update, context):
     uid = update.message.chat_id
@@ -122,19 +121,22 @@ async def category(update, context):
     cur.execute("UPDATE users SET category=? WHERE id=?", (cat, uid))
     conn.commit()
 
-    # FREE ENTRY LOGIC
+    # ================= ADMIN FREE =================
+    if uid == ADMIN_ID:
+        btn = [[InlineKeyboardButton("📤 Submit UTR", callback_data="submit_pay")]]
+        await update.message.reply_text("👑 Admin Free Entry", reply_markup=InlineKeyboardMarkup(btn))
+        return
+
+    # ================= REFERRAL FREE =================
     if "15" in cat and refs >= 5 and free_used == 0:
         cur.execute("UPDATE users SET free_used=1 WHERE id=?", (uid,))
         conn.commit()
 
         btn = [[InlineKeyboardButton("📤 Submit UTR", callback_data="submit_pay")]]
-
-        await update.message.reply_text(
-            "🎉 FREE ENTRY UNLOCKED!\nClick below to continue 👇",
-            reply_markup=InlineKeyboardMarkup(btn)
-        )
+        await update.message.reply_text("🎉 FREE ENTRY UNLOCKED!", reply_markup=InlineKeyboardMarkup(btn))
         return
 
+    # ================= NORMAL PAY =================
     btn = [[InlineKeyboardButton("💰 Pay Now", callback_data=f"pay_{fee}")]]
     await update.message.reply_text(f"{cat}\nFee ₹{fee}", reply_markup=InlineKeyboardMarkup(btn))
 
@@ -176,7 +178,7 @@ async def text(update, context):
         await category(update, context)
         return
 
-    # UTR SUBMIT
+    # ================= UTR =================
     if context.user_data.get("mode") == "utr":
         now = str(datetime.datetime.now())
 
@@ -185,16 +187,15 @@ async def text(update, context):
 
         context.user_data.clear()
 
-        # ADMIN APPROVAL BUTTON
         btn = [[InlineKeyboardButton("✅ Approve", callback_data=f"approve_{uid}")]]
 
         await context.bot.send_message(
             ADMIN_ID,
-            f"💰 New Payment\n\n👤 User: {uid}\n🔢 UTR: {msg}\n⏰ {now}",
+            f"💰 Payment\nUser: {uid}\nUTR: {msg}\nTime: {now}",
             reply_markup=InlineKeyboardMarkup(btn)
         )
 
-        await update.message.reply_text("✅ Payment submitted! Wait for approval ⏳")
+        await update.message.reply_text("✅ Payment submitted! Wait for approval")
 
 # =========================
 # APPROVE
