@@ -9,15 +9,12 @@ from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-# =========================
-# CONFIG
-# =========================
-TOKEN = "8645060426:AAEMoRac1FZQLXcuKHtmSk3wYHP7mOQksIQ"
+TOKEN = "8213230162:AAHoiA3-h1P3cPZYw89ebnEzxP4MnlJvP7Q"
 ADMIN_ID = 6676943475
 UPI_ID = "himanshuji90million@fam"
 
 # =========================
-# FLASK (Render Fix)
+# FLASK
 # =========================
 web_app = Flask(__name__)
 
@@ -37,40 +34,78 @@ threading.Thread(target=run_web, daemon=True).start()
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cur = conn.cursor()
 
-cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, category TEXT, approved INTEGER, code TEXT)")
+cur.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, category TEXT, approved INTEGER, code TEXT, ref INTEGER DEFAULT 0, free_entry INTEGER DEFAULT 0)")
 cur.execute("CREATE TABLE IF NOT EXISTS payments (user_id INTEGER, utr TEXT, date TEXT)")
 cur.execute("CREATE TABLE IF NOT EXISTS videos (user_id INTEGER, link TEXT, date TEXT)")
+conn.commit()
 
 # =========================
-# START
+# START + REFERRAL
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.chat_id
+
+    # referral check
+    if context.args:
+        ref_id = int(context.args[0])
+        if ref_id != uid:
+            cur.execute("UPDATE users SET ref = ref + 1 WHERE id=?", (ref_id,))
+            conn.commit()
+
     keyboard = [
         ["🔥 10–500 Followers (₹15)"],
         ["⚡ 500–1000 Followers (₹50)"],
-        ["🚀 1000–10000 Followers (₹200)"]
+        ["🚀 1000–10000 Followers (₹200)"],
+        ["🏆 Leaderboard"]
     ]
-    await update.message.reply_text("Choose category 👇", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+
+    await update.message.reply_text(
+        "Welcome!\nChoose category 👇",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
 
 # =========================
-# CATEGORY (LIMIT 50)
+# CATEGORY + FREE ENTRY
 # =========================
 async def category(update, context):
     uid = update.message.chat_id
     cat = update.message.text
 
-    cur.execute("SELECT COUNT(*) FROM users WHERE category=?", (cat,))
-    if cur.fetchone()[0] >= 50:
-        await update.message.reply_text("❌ Category full (50 users)")
-        return
+    cur.execute("SELECT ref, free_entry FROM users WHERE id=?", (uid,))
+    data = cur.fetchone()
+
+    refs = data[0] if data else 0
+    free = data[1] if data else 0
 
     fee = "15" if "15" in cat else "50" if "50" in cat else "200"
 
-    cur.execute("INSERT OR REPLACE INTO users VALUES (?, ?, 0, '')", (uid, cat))
-    conn.commit()
+    # FREE ENTRY LOGIC
+    if "15" in cat and refs >= 5 and free == 0:
+        cur.execute("UPDATE users SET free_entry=1 WHERE id=?", (uid,))
+        conn.commit()
+
+        btn = [[InlineKeyboardButton("📤 Submit UTR", callback_data="submit_pay")]]
+        await update.message.reply_text("🎉 Free Entry Unlocked!", reply_markup=InlineKeyboardMarkup(btn))
+        return
 
     btn = [[InlineKeyboardButton("💰 Pay Now", callback_data=f"pay_{fee}")]]
     await update.message.reply_text(f"{cat}\nFee ₹{fee}", reply_markup=InlineKeyboardMarkup(btn))
+
+# =========================
+# LEADERBOARD
+# =========================
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = "🏆 Leaderboard\n\n"
+
+    cur.execute("SELECT users.id, users.category, COUNT(videos.user_id) FROM users LEFT JOIN videos ON users.id = videos.user_id GROUP BY users.id ORDER BY COUNT(videos.user_id) DESC LIMIT 10")
+    data = cur.fetchall()
+
+    rank = 1
+    for d in data:
+        msg += f"{rank}. {d[0]} | {d[1]} | Videos: {d[2]}\n"
+        rank += 1
+
+    await update.message.reply_text(msg)
 
 # =========================
 # PAY
@@ -92,10 +127,8 @@ async def submit_pay(update, context):
     q = update.callback_query
     await q.answer()
 
-    context.user_data.clear()
     context.user_data["mode"] = "utr"
-
-    await q.message.reply_text("Send your UTR number")
+    await q.message.reply_text("Send UTR")
 
 # =========================
 # TEXT HANDLER
@@ -104,130 +137,37 @@ async def text(update, context):
     uid = update.message.chat_id
     msg = update.message.text
 
+    if msg == "🏆 Leaderboard":
+        await leaderboard(update, context)
+        return
+
     if msg in ["🔥 10–500 Followers (₹15)", "⚡ 500–1000 Followers (₹50)", "🚀 1000–10000 Followers (₹200)"]:
         await category(update, context)
         return
 
-    # SUBMIT VIDEO BUTTON
+    # VIDEO
     if msg == "📤 Submit Video":
-        cur.execute("SELECT approved FROM users WHERE id=?", (uid,))
-        d = cur.fetchone()
-
-        if not d or int(d[0]) != 1:
-            await update.message.reply_text("❌ You are not approved yet")
-            return
-
-        context.user_data.clear()
         context.user_data["mode"] = "video"
-
-        await update.message.reply_text("📸 Send Instagram Reel/Post link")
+        await update.message.reply_text("Send Instagram link")
         return
 
-    # VIDEO SUBMIT (INSTAGRAM)
     if context.user_data.get("mode") == "video":
-
-        if not ("instagram.com/reel/" in msg or "instagram.com/p/" in msg):
-            await update.message.reply_text("❌ Invalid Instagram link")
-            return
-
         today = str(datetime.date.today())
-
-        cur.execute("SELECT * FROM videos WHERE user_id=? AND date=?", (uid, today))
-        if cur.fetchone():
-            await update.message.reply_text("⚠️ Already submitted today")
-            return
 
         cur.execute("INSERT INTO videos VALUES (?, ?, ?)", (uid, msg, today))
         conn.commit()
 
-        context.user_data.clear()
-
-        await update.message.reply_text("✅ Video submitted")
-        await context.bot.send_message(ADMIN_ID, f"📸 Insta Video\nUser: {uid}\nLink: {msg}")
+        await update.message.reply_text("✅ Submitted")
         return
 
-    # UTR SUBMIT
+    # UTR
     if context.user_data.get("mode") == "utr":
         now = str(datetime.datetime.now())
 
         cur.execute("INSERT INTO payments VALUES (?, ?, ?)", (uid, msg, now))
         conn.commit()
 
-        context.user_data.clear()
-
-        btn = [[InlineKeyboardButton("Approve", callback_data=f"approve_{uid}")]]
-
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"💰 Payment\nUser: {uid}\nUTR: {msg}\nTime: {now}",
-            reply_markup=InlineKeyboardMarkup(btn)
-        )
-
-        await update.message.reply_text("✅ Payment submitted")
-        return
-
-# =========================
-# APPROVE
-# =========================
-async def approve(update, context):
-    q = update.callback_query
-    await q.answer()
-
-    if q.from_user.id != ADMIN_ID:
-        return
-
-    uid = int(q.data.split("_")[1])
-
-    code = "FreeSpons-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
-
-    cur.execute("UPDATE users SET approved=1, code=? WHERE id=?", (code, uid))
-    conn.commit()
-
-    kb = [["📤 Submit Video"]]
-
-    await context.bot.send_message(uid, "🎉 Approved!")
-    await context.bot.send_message(uid, f"🔑 `{code}`", parse_mode="Markdown")
-    await context.bot.send_message(uid, "Use this code in caption", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
-
-    await q.edit_message_text("Approved")
-
-# =========================
-# LIST
-# =========================
-async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat_id != ADMIN_ID:
-        return
-
-    cur.execute("SELECT * FROM payments")
-    data = cur.fetchall()
-
-    if not data:
-        await update.message.reply_text("No payments")
-        return
-
-    for d in data:
-        btn = [[InlineKeyboardButton("Approve", callback_data=f"approve_{d[0]}")]]
-        await update.message.reply_text(f"{d[0]}\n{d[1]}\n{d[2]}", reply_markup=InlineKeyboardMarkup(btn))
-
-# =========================
-# DATA
-# =========================
-async def data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat_id != ADMIN_ID:
-        return
-
-    cur.execute("SELECT videos.user_id, videos.link, videos.date, users.category FROM videos JOIN users ON videos.user_id = users.id")
-    data = cur.fetchall()
-
-    if not data:
-        await update.message.reply_text("No data")
-        return
-
-    msg = ""
-    for d in data:
-        msg += f"{d[0]} | {d[3]} | {d[2]}\n{d[1]}\n\n"
-
-    await update.message.reply_text(msg)
+        await update.message.reply_text("✅ Payment Submitted")
 
 # =========================
 # MAIN
@@ -235,11 +175,8 @@ async def data_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("list", list_cmd))
-app.add_handler(CommandHandler("data", data_cmd))
 app.add_handler(CallbackQueryHandler(pay, pattern="pay_"))
 app.add_handler(CallbackQueryHandler(submit_pay, pattern="submit_pay"))
-app.add_handler(CallbackQueryHandler(approve, pattern="approve_"))
 app.add_handler(MessageHandler(filters.TEXT, text))
 
 app.run_polling()
