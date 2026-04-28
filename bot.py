@@ -15,7 +15,7 @@ TOKEN = "8213230162:AAHoiA3-h1P3cPZYw89ebnEzxP4MnlJvP7Q"
 YOUTUBE_API_KEY = "AIzaSyBs0ilXb61cEjmWAHAiA5pH51h8i5xUDI0"
 
 # =========================
-# FLASK (Render fix)
+# FLASK
 # =========================
 web_app = Flask(__name__)
 
@@ -48,23 +48,37 @@ CREATE TABLE IF NOT EXISTS videos (
 conn.commit()
 
 # =========================
-# YOUTUBE FUNCTIONS
+# YOUTUBE FUNCTIONS (FIXED)
 # =========================
 def get_video_id(link):
-    if "youtu.be" in link:
-        return link.split("/")[-1]
-    if "v=" in link:
-        return link.split("v=")[1].split("&")[0]
+    try:
+        if "youtu.be" in link:
+            return link.split("/")[-1].split("?")[0]
+
+        if "youtube.com/watch" in link:
+            return link.split("v=")[1].split("&")[0]
+
+        if "youtube.com/shorts" in link:
+            return link.split("/shorts/")[1].split("?")[0]
+
+    except:
+        return None
+
     return None
 
 def get_stats(video_id):
     url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
-    data = requests.get(url).json()
+    
+    try:
+        data = requests.get(url).json()
+    except:
+        return None, None
 
     if not data.get("items"):
         return None, None
 
     stats = data["items"][0]["statistics"]
+
     views = int(stats.get("viewCount", 0))
     likes = int(stats.get("likeCount", 0))
 
@@ -85,48 +99,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Demo Bot 👇", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
 
 # =========================
-# SUBMIT
+# MAIN HANDLER
 # =========================
 async def text(update, context):
     msg = update.message.text
     uid = update.message.chat_id
 
+    # Submit button
     if msg == "📤 Submit Video":
+        context.user_data.clear()
         context.user_data["mode"] = "submit"
-        await update.message.reply_text("Send YouTube link")
+        await update.message.reply_text("📥 Send YouTube video link")
         return
 
+    # Leaderboard
     if msg == "🏆 Leaderboard":
         await show_leaderboard(update)
         return
 
+    # Refresh
     if msg == "🔄 Refresh Ranking":
         await refresh_all(update)
         return
 
-    # submit link
+    # ================= VIDEO PROCESS =================
     if context.user_data.get("mode") == "submit":
-        vid = get_video_id(msg)
 
-        if not vid:
-            await update.message.reply_text("❌ Invalid link")
+        video_id = get_video_id(msg)
+
+        if not video_id:
+            await update.message.reply_text("❌ Invalid YouTube link\n(Use video/shorts link)")
             return
 
-        views, likes = get_stats(vid)
+        views, likes = get_stats(video_id)
 
         if views is None:
-            await update.message.reply_text("❌ API error")
+            await update.message.reply_text("❌ API Error / Video Private")
             return
 
         score = calc_score(views, likes)
 
-        cur.execute("INSERT INTO videos (user_id, link, views, likes, score) VALUES (?, ?, ?, ?, ?)",
-                    (uid, msg, views, likes, score))
+        cur.execute(
+            "INSERT INTO videos (user_id, link, views, likes, score) VALUES (?, ?, ?, ?, ?)",
+            (uid, msg, views, likes, score)
+        )
         conn.commit()
 
         context.user_data.clear()
 
-        await update.message.reply_text(f"✅ Added\n👁 {views}\n👍 {likes}\n🏆 {score}")
+        await update.message.reply_text(
+            f"✅ Video Submitted\n\n👁 Views: {views}\n👍 Likes: {likes}\n🏆 Score: {score}"
+        )
 
 # =========================
 # LEADERBOARD
@@ -136,21 +159,24 @@ async def show_leaderboard(update):
     data = cur.fetchall()
 
     if not data:
-        await update.message.reply_text("No data")
+        await update.message.reply_text("No data yet")
         return
 
     text = "🏆 Leaderboard:\n\n"
+
     for i, d in enumerate(data, start=1):
-        text += f"{i}. {d[1]}\n{d[0]}\n\n"
+        text += f"{i}. 🏆 {d[1]}\n{d[0]}\n\n"
 
     await update.message.reply_text(text)
 
 # =========================
-# REFRESH ALL DATA
+# REFRESH ALL
 # =========================
 async def refresh_all(update):
     cur.execute("SELECT id, link FROM videos")
     rows = cur.fetchall()
+
+    updated = 0
 
     for r in rows:
         vid = get_video_id(r[1])
@@ -161,12 +187,15 @@ async def refresh_all(update):
 
         score = calc_score(views, likes)
 
-        cur.execute("UPDATE videos SET views=?, likes=?, score=? WHERE id=?",
-                    (views, likes, score, r[0]))
+        cur.execute(
+            "UPDATE videos SET views=?, likes=?, score=? WHERE id=?",
+            (views, likes, score, r[0])
+        )
+        updated += 1
 
     conn.commit()
 
-    await update.message.reply_text("🔄 All videos updated!\nNow check leaderboard")
+    await update.message.reply_text(f"🔄 Updated {updated} videos\nCheck leaderboard now!")
 
 # =========================
 # MAIN
