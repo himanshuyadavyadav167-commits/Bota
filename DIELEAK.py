@@ -16,7 +16,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 load_dotenv()
 
-BOT_TOKEN        = os.getenv("7782412259:AAGRkbyOv1I6HsgOaGaq1LUnqnUOlqgabKE")
+BOT_TOKEN        = os.getenv("8770445986:AAF4xwpxUvivXnxId1jDF3ZaCOV4U_Imz7E8770445986:AAF4xwpxUvivXnxId1jDF3ZaCOV4U_Imz7E")
 MONGODB_URI      = os.getenv("mongodb+srv://himanshuyadavyadav167_db_user:<3QZk2sQZNbTxsH5K>@cluster0.0r5pdj3.mongodb.net/?appName=Cluster0", "HEX.09.01")
 DATABASE_NAME    = os.getenv("himanshu", "attack_bot")
 API_URL          = os.getenv("https://kimstress.st")
